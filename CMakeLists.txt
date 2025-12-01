@@ -13,6 +13,7 @@ file(
     CONFIGURE_DEPENDS  # Automatically reconfigure if source files are added/removed.
     ${PROJECT_SOURCE_DIR}/lib/*.cpp
     ${PROJECT_SOURCE_DIR}/lib/*.hpp
+    ${PROJECT_SOURCE_DIR}/include/*.hpp
 )
 
 file(
@@ -30,10 +31,11 @@ else()
 endif()
 
 add_library("${PROJECT_NAME}_lib" ${LIB_FILES})
-set_property(TARGET "${PROJECT_NAME}_lib" PROPERTY CXX_STANDARD 11)
+target_include_directories("${PROJECT_NAME}_lib" PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+set_property(TARGET "${PROJECT_NAME}_lib" PROPERTY CXX_STANDARD 17)
 
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 11)
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 17)
 
 target_link_libraries(${PROJECT_NAME} "${PROJECT_NAME}_lib")

@@ -3,23 +3,29 @@
 #include <iostream>
 #include <string>
 
-static std::string read(std::string str) { return str; }
+static void read(MALState &state, std::string &str) {
+  return state.read_str(str);
+}
 
-static std::string eval(std::string ast, void *) { return ast; }
+static void eval(const MALState &) {}
 
-static std::string print(std::string exp) { return exp; }
+static std::string print(const MALState &state) { return state.print_str(); }
 
-static std::string rep(std::string str) {
-  return print(eval(read(str), nullptr));
+static std::string rep(MALState &state, std::string &str) {
+  read(state, str);
+  eval(state);
+  return print(state);
 }
 
 int main(void) {
+  MALState state;
   std::string str;
 
   std::cout << "user> ";
 
   while (std::getline(std::cin, str)) {
-    std::cout << rep(str) << "\n";
+    std::cout << rep(state, str) << "\n";
     std::cout << "user> ";
   }
+  std::cout << "\n";
 }
