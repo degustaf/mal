@@ -5,6 +5,7 @@
 
 #include <cassert>
 #include <cctype>
+#include <cstring>
 #include <memory>
 #include <string>
 
@@ -12,6 +13,13 @@ Token Scanner::scan(void) {
   auto ret = peek();
   current += ret.length;
   return ret;
+}
+
+static Token specialIdentifier(const char *current, int len) {
+  if (len == 3 && strncmp("nil", current, (size_t)len) == 0) {
+    return Token{TokenType::NIL, current, len};
+  }
+  return Token{TokenType::Identifier, current, len};
 }
 
 Token Scanner::peek(void) {
@@ -98,10 +106,10 @@ Token Scanner::peek(void) {
       case '`':
       case ',':
       case ';':
-        return Token{TokenType::Identifier, current, len};
+        return specialIdentifier(current, len);
       default:
         if (std::isspace(current[len]))
-          return Token{TokenType::Identifier, current, len};
+          return specialIdentifier(current, len);
         len++;
       }
     }
@@ -111,53 +119,40 @@ Token Scanner::peek(void) {
 
 static MALType read_form(Scanner &scanner);
 
-template <TokenType closer, typename T>
-static inline MALType read_container(Scanner &scanner) {
-  auto list = std::make_shared<T>();
+template <TokenType closer>
+static inline MALType read_container(std::shared_ptr<MALList> list,
+                                     Scanner &scanner) {
   for (auto tok = scanner.peek();
        tok.type != closer && tok.type != TokenType::EOFToken;
        tok = scanner.peek()) {
     auto m = read_form(scanner);
-    if (auto err = std::get_if<std::shared_ptr<MALError>>(&m.data); err) {
+    if (scanner.error)
       return m;
-    }
     list->data.push_back(m);
   }
   if (scanner.peek().type == TokenType::EOFToken) {
-    return MALType{std::make_shared<MALError>("EOF")};
+    scanner.error = std::make_shared<MALError>("EOF");
+    return MALType();
   }
   scanner.scan(); // Discard the close paren.
   return MALType{list};
 }
 
 static MALType read_list(Scanner &scanner) {
-  return read_container<TokenType::RightParen, MALList>(scanner);
+  return read_container<TokenType::RightParen>(std::make_shared<MALList>(),
+                                               scanner);
 }
 
 static MALType read_vec(Scanner &scanner) {
-  return read_container<TokenType::RightBracket, MALVector>(scanner);
+  auto list = std::make_shared<MALList>();
+  list->data.push_back(MALType{std::make_shared<MALSymbol>("vec")});
+  return read_container<TokenType::RightBracket>(list, scanner);
 }
 
 static MALType read_map(Scanner &scanner) {
-  auto map = std::make_shared<MALMap>();
-  for (auto tok = scanner.peek();
-       tok.type != TokenType::RightBrace && tok.type != TokenType::EOFToken;
-       tok = scanner.peek()) {
-    auto key = read_form(scanner);
-    if (auto err = std::get_if<std::shared_ptr<MALError>>(&key.data); err) {
-      return key;
-    }
-    auto val = read_form(scanner);
-    if (auto err = std::get_if<std::shared_ptr<MALError>>(&val.data); err) {
-      return val;
-    }
-    map->data[key] = val;
-  }
-  if (scanner.peek().type == TokenType::EOFToken) {
-    return MALType{std::make_shared<MALError>("EOF")};
-  }
-  scanner.scan(); // Discard the close paren.
-  return MALType{map};
+  auto list = std::make_shared<MALList>();
+  list->data.push_back(MALType{std::make_shared<MALSymbol>("hash-map")});
+  return read_container<TokenType::RightBrace>(list, scanner);
 }
 
 static MALType read_string(Scanner &scanner) {
@@ -166,7 +161,8 @@ static MALType read_string(Scanner &scanner) {
   if (tok.length > 1 && tok.start[tok.length - 1] == '"') {
     return MALType{std::make_shared<MALString>(tok.start, tok.length)};
   }
-  return MALType{std::make_shared<MALError>("EOF")};
+  scanner.error = std::make_shared<MALError>("EOF");
+  return MALType();
 }
 
 static MALType read_macro(Scanner &scanner, const std::string &symbol) {
@@ -175,7 +171,7 @@ static MALType read_macro(Scanner &scanner, const std::string &symbol) {
   auto list = std::make_shared<MALList>();
   list->data.push_back(MALType{std::make_shared<MALSymbol>(symbol)});
   auto m = read_form(scanner);
-  if (auto err = std::get_if<std::shared_ptr<MALError>>(&m.data); err) {
+  if (scanner.error) {
     return m;
   }
   list->data.push_back(m);
@@ -190,12 +186,12 @@ static MALType read_meta(Scanner &scanner) {
   list->data.push_back(MALType{std::make_shared<MALSymbol>("with-meta")});
 
   auto meta = read_form(scanner);
-  if (auto err = std::get_if<std::shared_ptr<MALError>>(&meta.data); err) {
+  if (scanner.error) {
     return meta;
   }
 
   auto form = read_form(scanner);
-  if (auto err = std::get_if<std::shared_ptr<MALError>>(&form.data); err) {
+  if (scanner.error) {
     return form;
   }
   list->data.push_back(form);
@@ -206,7 +202,8 @@ static MALType read_meta(Scanner &scanner) {
 
 static MALType read_atom(Scanner &scanner) {
   auto tok = scanner.scan();
-  if (isdigit(tok.start[0])) {
+  if (isdigit(tok.start[0]) ||
+      (tok.start[0] == '-' && tok.length > 1 && isdigit(tok.start[1]))) {
     size_t pos = 0;
     auto n = std::stoi(tok.start, &pos);
     assert(pos <= (size_t)tok.length);
@@ -218,7 +215,11 @@ static MALType read_atom(Scanner &scanner) {
     if (pos == (size_t)tok.length) {
       return MALType{x};
     }
-    return MALType{std::make_shared<MALError>("Bad number")};
+    scanner.error = std::make_shared<MALError>("Bad number");
+    return MALType();
+  }
+  if (tok.start[0] == ':') {
+    return MALType{std::make_shared<MALKeyword>(tok.start, tok.length)};
   }
   return MALType{std::make_shared<MALSymbol>(tok.start, tok.length)};
 }
@@ -236,7 +237,8 @@ static MALType read_form(Scanner &scanner) {
     scanner.scan(); // pop the Brace off the scanner.
     return read_map(scanner);
   case TokenType::EOFToken:
-    return MALType{std::make_shared<MALError>("EOF")};
+    scanner.error = std::make_shared<MALError>("EOF");
+    return MALType();
   case TokenType::String:
     return read_string(scanner);
   case TokenType::Quote:
@@ -251,13 +253,22 @@ static MALType read_form(Scanner &scanner) {
     return read_macro(scanner, "deref");
   case TokenType::Meta:
     return read_meta(scanner);
+  case TokenType::NIL:
+    scanner.scan();
+    return MALType{};
   default:
     return read_atom(scanner);
   }
   return MALType{};
 }
 
-void MALState::read_str(std::string &str) {
+bool MALState::read_str(std::string &str, int reg) {
   auto scanner = Scanner(str);
-  state->value = read_form(scanner);
+  auto ret = read_form(scanner);
+  if (scanner.error) {
+    state->error = scanner.error;
+    return false;
+  }
+  state->stack[(size_t)reg] = ret;
+  return true;
 }

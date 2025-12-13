@@ -1,6 +1,10 @@
 #pragma once
 
+#include "types.hpp"
+
+#include <memory>
 #include <string>
+
 enum struct TokenType {
   None,
   LeftParen,
@@ -15,6 +19,7 @@ enum struct TokenType {
   QuasiQuote,
   Unquote,
   SpliceUnquote,
+  NIL,
 
   String,
   Identifier,
@@ -30,9 +35,12 @@ struct Token {
 };
 
 struct Scanner {
-  Scanner(const std::string &str) : data(str), current(data.data()) {}
+  Scanner(const std::string &str)
+      : error(nullptr), data(str), current(data.data()) {}
   Token scan(void);
   Token peek(void);
+
+  std::shared_ptr<MALError> error;
 
 private:
   const std::string &data;

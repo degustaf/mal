@@ -3,18 +3,24 @@
 #include <iostream>
 #include <string>
 
-static void read(MALState &state, std::string &str) {
-  return state.read_str(str);
-}
-
-static void eval(const MALState &) {}
-
-static std::string print(const MALState &state) { return state.print_str(); }
-
 static std::string rep(MALState &state, std::string &str) {
-  read(state, str);
-  eval(state);
-  return print(state);
+  int reg = 0;
+  if (!state.read_str(str, reg)) {
+    auto ret = state.get_error();
+    state.clear_error();
+    return ret;
+  }
+  if (!state.compile(reg)) {
+    auto ret = state.get_error();
+    state.clear_error();
+    return ret;
+  }
+  if (!state.eval(reg)) {
+    auto ret = state.get_error();
+    state.clear_error();
+    return ret;
+  }
+  return state.print_str(reg);
 }
 
 int main(void) {

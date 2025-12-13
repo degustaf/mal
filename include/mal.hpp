@@ -12,10 +12,23 @@ struct MALState {
   MALState(const MALState &s) = delete;
   MALState &operator=(const MALState &s) = delete;
 
-  void read_str(std::string &);
-  std::string print_str(void) const;
+  bool read_str(std::string &, int);
+  bool compile(int);
+  bool eval(int);
+  std::string print_str(int) const;
+  std::string get_error() const;
+  void clear_error();
 
 private:
   struct State;
   State *state;
+
+  static bool add(MALState *, size_t);
+  static bool mult(MALState *, size_t);
+  static bool sub(MALState *, size_t);
+  static bool div(MALState *, size_t);
+  static bool vec(MALState *, size_t);
+  static bool hash_map(MALState *, size_t);
 };
+
+typedef bool (*CFunction)(MALState *state, size_t argCount);
