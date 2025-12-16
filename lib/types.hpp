@@ -2,6 +2,7 @@
 
 #include "mal.hpp"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -25,6 +26,7 @@ struct MALList {
   inline auto end() { return data.end(); };
   inline auto end() const { return data.end(); };
   inline auto empty() const { return data.empty(); };
+  inline auto size() const { return data.size(); };
 
   std::vector<MALType> data;
 };
@@ -33,6 +35,15 @@ struct MALVector {
   MALVector() : data(){};
   MALVector(size_t n) : data() { data.reserve(n); };
   operator std::string();
+
+  inline auto begin() { return data.begin(); };
+  inline auto begin() const { return data.begin(); };
+  inline auto end() { return data.end(); };
+  inline auto end() const { return data.end(); };
+  inline auto empty() const { return data.empty(); };
+  inline auto size() const { return data.size(); };
+  inline const MALType &operator[](size_t n) const { return data[n]; };
+  inline MALType &operator[](size_t n) { return data[n]; };
 
   std::vector<MALType> data;
 };
@@ -80,6 +91,7 @@ struct MALCFunc {
 
 struct MALError {
   MALError(const std::string &msg) : msg(msg){};
+  MALError(const char *msg) : msg(msg){};
 
   operator std::string() const;
   std::string msg;
@@ -96,6 +108,19 @@ struct MALType {
                std::shared_ptr<MALString>, std::shared_ptr<MALCFunc>,
                std::shared_ptr<CallFrame>>
       data;
+};
+
+struct Iterator {
+  template <typename T> std::array<const MALType *, 2> operator()(T &) {
+    return {nullptr, nullptr};
+  }
+  std::array<const MALType *, 2>
+  operator()(const std::shared_ptr<MALVector> &v) {
+    return {&(*v->begin()), &(*v->end())};
+  };
+  std::array<const MALType *, 2> operator()(const std::shared_ptr<MALList> &l) {
+    return {&(*l->begin()), &(*l->end())};
+  };
 };
 
 struct CallFrame {

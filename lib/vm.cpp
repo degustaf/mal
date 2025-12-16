@@ -36,9 +36,16 @@ bool MALState::State::eval(int) {
         assert(stackTop + instruction.regA() <= stack.end());
         stackTop[instruction.regA()] = val->second;
       } else {
-        error = std::make_shared<MALError>("Unkown global variable");
+        error = std::make_shared<MALError>("Unknown global variable");
         return false;
       }
+      break;
+    }
+    case opCode::GLOBAL_SET: {
+      assert(stackTop + instruction.regA() <= stack.end());
+      assert(instruction.regD() <= chunk->constants.size());
+      globals.data[chunk->constants[instruction.regD()]] =
+          stackTop[instruction.regA()];
       break;
     }
     case opCode::NEW_LIST:

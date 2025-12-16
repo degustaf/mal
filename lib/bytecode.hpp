@@ -8,6 +8,7 @@
 #define OPCODE_BUILDER(X, sep)                                                 \
   X(CONST, AD)                                                                 \
   sep X(GLOBAL_GET, AD)                                                        \
+  sep X(GLOBAL_SET, AD)                                                        \
   sep X(NEW_LIST, AD)                                                          \
   sep X(CALL, AD)                                                              \
   sep X(PRIMITIVE, AD)                                                         \

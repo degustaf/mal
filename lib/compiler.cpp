@@ -1,6 +1,6 @@
-#include "state.hpp"
-
+#include "bytecode.hpp"
 #include "chunk.hpp"
+#include "state.hpp"
 #include "types.hpp"
 
 #include <cassert>
@@ -17,6 +17,7 @@ enum class ExpKind {
   STRING,      // str is value
   KEYWORD,     // str is keyword name
   GLOBAL,      // str is symbol name
+  LOCAL,       // s.aux is local register, s.info is vars index
   CALL,        // s.info is instruction index, s.aux is base register
   RELOCABLE,   // s.info is instruction index
   NONRELOCABLE // r is value register
@@ -42,8 +43,23 @@ struct ExpDesc {
   ExpKind kind;
 };
 
+struct Scope {
+  Scope *outer = nullptr;
+  size_t nVars; // Number of variables in outer scope.
+};
+
+struct variableInfo {
+  std::string name;
+  reg slot;
+  uint8_t flags;
+};
+
 struct FuncState {
-  FuncState() : chunk(std::make_unique<Chunk>()){};
+  FuncState(std::vector<variableInfo> &vars)
+      : chunk(std::make_unique<Chunk>()), varsRef(vars), outer(nullptr){};
+  FuncState(FuncState &outer)
+      : chunk(std::make_unique<Chunk>()), varsRef(outer.varsRef),
+        outer(&outer){};
 
   reg regReserve(reg n) {
     size_t sz = nextFreeReg + n;
@@ -74,10 +90,38 @@ struct FuncState {
     expr2Reg(e, nextFreeReg - 1);
   };
 
-  void varLookup(std::string &name, ExpDesc &e) {
-    // TODO handle local variables.
+  reg expr2anyReg(ExpDesc &e) {
+    exprDischarge(e);
+    if (e.kind == ExpKind::NONRELOCABLE) {
+      // if(!has jump)
+      return e.u.r;
+      // else ...
+    }
+    expr2nextReg(e);
+    return e.u.r;
+  }
+
+  int varLookup(std::string &name, ExpDesc &e, bool) {
+    auto r = varLookupLocal(name);
+    if (r >= 0) {
+      e.u.s.aux = (reg)r;
+      e.kind = ExpKind::LOCAL;
+      // TODO upvalue logic
+      e.u.s.info = varMap[(reg)r];
+      return (int)e.u.s.info;
+    }
+    if (outer) {
+      auto vidx = outer->varLookup(name, e, false);
+      if (vidx >= 0) {
+        // TODO it's an upvalue
+      }
+      return vidx;
+    }
+
+    // Must be a global variable.
     e = ExpDesc(name);
     e.kind = ExpKind::GLOBAL;
+    return -1;
   };
 
   std::unique_ptr<Chunk> getChunk() {
@@ -91,6 +135,34 @@ struct FuncState {
     chunk->code.push_back(ins);
     return (uint32_t)chunk->code.size() - 1;
   }
+
+  void emitGlobalStore(std::string &var, ExpDesc &e) {
+    auto r = expr2anyReg(e);
+    auto str = chunk->addConstant(MALType{std::make_shared<MALString>(var)});
+    auto ins = byteCode::AD(opCode::GLOBAL_SET, r, str);
+    emit_ins(ins);
+  }
+
+  void beginScope(Scope &scope) {
+    scope.nVars = nVars;
+    scope.outer = this->scope;
+    this->scope = &scope;
+    assert(nextFreeReg == nVars);
+  }
+
+  void endScope() {
+    auto block = scope;
+    scope = block->outer;
+    while (nVars > block->nVars) {
+      varsRef.pop_back();
+      nVars--;
+    }
+    nextFreeReg = nVars;
+    // TODO upvalues
+  }
+
+  reg nVars = 0;
+  std::vector<uint16_t> varMap;
 
 private:
   void regFree(reg r) {
@@ -110,6 +182,10 @@ private:
       e.kind = ExpKind::RELOCABLE;
       break;
     }
+    case ExpKind::LOCAL:
+      e.kind = ExpKind::NONRELOCABLE;
+      e.u.r = e.u.s.aux;
+      break;
     case ExpKind::CALL:
       e.kind = ExpKind::NONRELOCABLE;
       e.u.r = e.u.s.aux;
@@ -172,15 +248,32 @@ private:
     }
   }
 
-  reg nVars = 0;
+  int varLookupLocal(std::string &str) {
+    for (int i = (int)varsRef.size() - 1; i >= 0; i--) {
+      if (varsRef[varMap[(size_t)i]].name == str) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   reg nextFreeReg = 0;
   uint8_t frameSize = 0;
   std::unique_ptr<Chunk> chunk;
+  std::vector<variableInfo> &varsRef;
+  Scope *scope = nullptr;
+  FuncState *outer;
 };
 
 struct Compiler {
-  Compiler(ExpDesc &e) : fn(), e(&e), error(nullptr){};
-  FuncState fn;
+  Compiler(ExpDesc &e)
+      : vars(), fn(new FuncState(vars)), e(&e), error(nullptr){};
+  Compiler(const Compiler &) = delete;
+  Compiler &operator=(const Compiler &) = delete;
+  ~Compiler() { delete fn; }
+
+  std::vector<variableInfo> vars;
+  FuncState *fn;
   ExpDesc *e;
   std::shared_ptr<MALError> error;
 
@@ -188,41 +281,60 @@ struct Compiler {
   void operator()(bool b) { *e = ExpDesc(b); };
   void operator()(int n) { *e = ExpDesc(n); };
   void operator()(double x) { *e = ExpDesc(x); };
-  void operator()(std::shared_ptr<MALSymbol> sym) {
-    fn.varLookup(sym->symbol, *e);
+  void operator()(const std::shared_ptr<MALSymbol> &sym) {
+    fn->varLookup(sym->symbol, *e, true);
   };
-  void operator()(std::shared_ptr<MALKeyword> key) {
+  void operator()(const std::shared_ptr<MALKeyword> &key) {
     *e = ExpDesc(key->keyword);
     e->kind = ExpKind::KEYWORD;
   };
   void operator()(std::shared_ptr<MALString> str) { *e = ExpDesc(str->str); };
   void operator()(std::shared_ptr<MALCFunc>) { assert(false); };
   void operator()(std::shared_ptr<CallFrame>) { assert(false); };
+  void operator()(std::shared_ptr<MALMap>) { assert(false); };
 
-  void operator()(std::shared_ptr<MALList> l) {
+  void operator()(const std::shared_ptr<MALList> &l) {
     if (l->empty()) {
-      auto r = fn.regReserve(1);
-      fn.emit_ins(byteCode::AD(opCode::NEW_LIST, r, 0));
+      auto r = fn->regReserve(1);
+      fn->emit_ins(byteCode::AD(opCode::NEW_LIST, r, 0));
       e->kind = ExpKind::NONRELOCABLE;
       e->u.r = r;
       return;
     };
 
-    // TODO handle special forms
+    // Special forms
+    if (auto m = std::get_if<std::shared_ptr<MALSymbol>>(&l->data[0].data); m) {
+      auto &form = (*m)->symbol;
+      if (form == "def!") {
+        defCall(*l);
+        return;
+      } else if (form == "let*") {
+        letCall(*l);
+        return;
+      }
+    }
 
     // a non-empty list is a function call.
     functionCall(*l);
   };
 
-  void operator()(std::shared_ptr<MALVector>) { /* TODO */ };
-  void operator()(std::shared_ptr<MALMap>) { /* TODO */ };
+  void operator()(const std::shared_ptr<MALVector> &v) {
+    auto l = MALList(v->size() + 1);
+    l.data.push_back(MALType{std::make_shared<MALSymbol>("vec")});
+    for (auto &m : *v) {
+      l.data.push_back(m);
+    }
+    functionCall(l);
+  };
 
 private:
   void functionCall(const MALList &l) {
     assert(!l.empty());
     auto it = l.begin();
     std::visit(*this, it->data);
-    fn.expr2nextReg(*e);
+    if (error)
+      return;
+    fn->expr2nextReg(*e);
 
     uint16_t argCount = 0;
     it++;
@@ -231,20 +343,115 @@ private:
       ExpDesc args;
       e = &args;
       std::visit(*this, it->data);
+      if (error)
+        return;
       argCount++;
       for (it++; it != l.end(); it++) {
-        fn.expr2nextReg(*e);
+        fn->expr2nextReg(*e);
         std::visit(*this, it->data);
+        if (error)
+          return;
         argCount++;
       }
-      fn.expr2nextReg(args);
+      fn->expr2nextReg(args);
       e = e_cache;
     }
     auto base = e->u.r;
-    e->u.s.info = fn.emit_ins(byteCode::AD(opCode::CALL, base, argCount));
+    e->u.s.info = fn->emit_ins(byteCode::AD(opCode::CALL, base, argCount));
     e->u.s.aux = base;
     e->kind = ExpKind::CALL;
-    fn.setNextReg(base + 1);
+    fn->setNextReg(base + 1);
+  }
+
+  void defCall(const MALList &l) {
+    switch (l.size()) {
+    case 0:
+      assert(false); // How did we get here?
+      break;
+    case 1:
+    case 2:
+      error = std::make_shared<MALError>("Not enough arguments to def!");
+      return;
+    case 3:
+      // This is the good case
+      break;
+    default:
+      error = std::make_shared<MALError>("Too many arguments to def!");
+      return;
+    }
+    assert(l.size() == 3);
+    auto it = ++l.begin();
+    auto sym = std::get_if<std::shared_ptr<MALSymbol>>(&it->data);
+    if (sym == nullptr) {
+      error = std::make_shared<MALError>("Var name should be a simple symbol.");
+      return;
+    }
+    it++;
+
+    std::visit(*this, it->data);
+    fn->emitGlobalStore((*sym)->symbol, *e);
+  }
+
+  void letCall(const MALList &l) {
+    Scope sc;
+    fn->beginScope(sc);
+    auto it = l.begin();
+    assert(it != l.end());
+    it++;
+    if (it == l.end()) {
+      *e = ExpDesc();
+      return;
+    }
+
+    // This is where we actually handle the assignments.
+    auto [ptr, end] = std::visit(Iterator{}, it->data);
+    if (ptr == nullptr) {
+      error = std::make_shared<MALError>("argument to let* isn't a sequence");
+      return;
+    }
+    while (ptr != end) {
+      auto s = std::get_if<std::shared_ptr<MALSymbol>>(&ptr->data);
+      if (!s) {
+        error = std::make_shared<MALError>("Unsupported let binding");
+        return;
+      }
+      // If we cared about stack space we, would check if this was shadowing a
+      // variable in the same scope. since we look for variables from newest
+      // defined to oldest, this shouldn't matter.
+      assert(fn->varMap.size() == fn->nVars);
+      fn->varMap.push_back((uint16_t)vars.size());
+      vars.push_back({(*s)->symbol, 0, 0});
+
+      ptr++;
+      if (ptr != end) {
+        std::visit(*this, ptr->data);
+      } else {
+        e->kind = ExpKind::NIL;
+      }
+      fn->expr2nextReg(*e);
+      auto &v = *vars.rbegin();
+      v.slot = fn->nVars;
+      fn->nVars++;
+      ptr++;
+    }
+
+    it++;
+    if (it != l.end()) {
+      std::visit(*this, it->data);
+
+      for (it++; it != l.end(); it++) {
+        fn->expr2nextReg(*e);
+        std::visit(*this, it->data);
+      }
+    } else {
+      e->kind = ExpKind::NIL;
+    }
+    // fn->expr2Reg(*e, (reg)sc.nVars);
+
+    fn->endScope();
+    // if (e->kind == ExpKind::LOCAL) {
+    //   fn->regReserve(1);
+    // }
   }
 };
 
@@ -257,11 +464,11 @@ bool MALState::compile(int r) {
     state->error = compiler.error;
     return false;
   }
-  compiler.fn.expr2nextReg(e);
+  compiler.fn->expr2Reg(e, (reg)r);
   if (compiler.error) {
     state->error = compiler.error;
     return false;
   }
-  state->chunk = compiler.fn.getChunk();
+  state->chunk = compiler.fn->getChunk();
   return true;
 }

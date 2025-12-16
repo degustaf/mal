@@ -119,8 +119,8 @@ Token Scanner::peek(void) {
 
 static MALType read_form(Scanner &scanner);
 
-template <TokenType closer>
-static inline MALType read_container(std::shared_ptr<MALList> list,
+template <typename T, TokenType closer>
+static inline MALType read_container(std::shared_ptr<T> list,
                                      Scanner &scanner) {
   for (auto tok = scanner.peek();
        tok.type != closer && tok.type != TokenType::EOFToken;
@@ -139,20 +139,19 @@ static inline MALType read_container(std::shared_ptr<MALList> list,
 }
 
 static MALType read_list(Scanner &scanner) {
-  return read_container<TokenType::RightParen>(std::make_shared<MALList>(),
-                                               scanner);
+  return read_container<MALList, TokenType::RightParen>(
+      std::make_shared<MALList>(), scanner);
 }
 
 static MALType read_vec(Scanner &scanner) {
-  auto list = std::make_shared<MALList>();
-  list->data.push_back(MALType{std::make_shared<MALSymbol>("vec")});
-  return read_container<TokenType::RightBracket>(list, scanner);
+  auto list = std::make_shared<MALVector>();
+  return read_container<MALVector, TokenType::RightBracket>(list, scanner);
 }
 
 static MALType read_map(Scanner &scanner) {
   auto list = std::make_shared<MALList>();
   list->data.push_back(MALType{std::make_shared<MALSymbol>("hash-map")});
-  return read_container<TokenType::RightBrace>(list, scanner);
+  return read_container<MALList, TokenType::RightBrace>(list, scanner);
 }
 
 static MALType read_string(Scanner &scanner) {
