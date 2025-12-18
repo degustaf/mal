@@ -50,7 +50,7 @@ MALError::operator std::string() const { return msg; }
 
 struct StringVisitor {
   std::string operator()(std::monostate) { return "nil"; }
-  std::string operator()(bool b) { return std::to_string(b); }
+  std::string operator()(bool b) { return b ? "true" : "false"; }
   std::string operator()(int n) { return std::to_string(n); }
   std::string operator()(double x) { return std::to_string(x); }
   std::string operator()(std::shared_ptr<CallFrame>) {

@@ -27,8 +27,12 @@ private:
   static bool mult(MALState *, size_t);
   static bool sub(MALState *, size_t);
   static bool div(MALState *, size_t);
+  static bool list(MALState *, size_t);
+  static bool is_list(MALState *, size_t);
   static bool vec(MALState *, size_t);
   static bool hash_map(MALState *, size_t);
+  static bool is_empty(MALState *, size_t);
+  static bool count(MALState *, size_t);
 };
 
 typedef bool (*CFunction)(MALState *state, size_t argCount);

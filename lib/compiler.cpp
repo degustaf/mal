@@ -404,7 +404,7 @@ private:
     }
 
     // This is where we actually handle the assignments.
-    auto [ptr, end] = std::visit(Iterator{}, it->data);
+    auto [ptr, end] = std::visit(Iterator{*it}, it->data);
     if (ptr == nullptr) {
       error = std::make_shared<MALError>("argument to let* isn't a sequence");
       return;

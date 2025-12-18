@@ -3,6 +3,7 @@
 #include "types.hpp"
 
 #include <memory>
+#include <variant>
 
 MALState::MALState() : state(new MALState::State(*this)) {}
 
@@ -120,6 +121,27 @@ bool MALState::div(MALState *M, size_t argCount) {
   return false;
 }
 
+bool MALState::list(MALState *M, size_t argCount) {
+  auto ret = std::make_shared<MALList>(argCount);
+  auto stackPtr = M->state->stackTop;
+  for (size_t i = 0; i < argCount; i++) {
+    ret->data.push_back(*stackPtr);
+    stackPtr++;
+  }
+  M->state->stackTop[0] = MALType{ret};
+  return true;
+}
+
+bool MALState::is_list(MALState *M, size_t argCount) {
+  if (argCount == 0) {
+    M->state->stackTop[0] = MALType{false};
+    return true;
+  }
+  auto arg = std::get_if<std::shared_ptr<MALList>>(&M->state->stackTop[0].data);
+  M->state->stackTop[0] = MALType{(bool)arg};
+  return true;
+}
+
 bool MALState::vec(MALState *M, size_t argCount) {
   auto ret = std::make_shared<MALVector>(argCount);
   auto stackPtr = M->state->stackTop;
@@ -149,6 +171,40 @@ bool MALState::hash_map(MALState *M, size_t argCount) {
   return true;
 }
 
+bool MALState::is_empty(MALState *M, size_t argCount) {
+  if (argCount == 0) {
+    M->state->stackTop[0] = MALType{true};
+    return true;
+  }
+
+  auto &var = M->state->stackTop[0];
+  auto [start, end] = std::visit(Iterator{var}, var.data);
+  if (start == nullptr) {
+    assert(end == nullptr);
+    M->state->error = std::make_shared<MALError>("Argument isn't sequenceable");
+    return false;
+  }
+
+  var = MALType{start == end};
+  return true;
+}
+
+bool MALState::count(MALState *M, size_t argCount) {
+  auto &var = M->state->stackTop[0];
+  if (argCount == 0 || std::holds_alternative<MALNil>(var.data)) {
+    var = MALType{0};
+    return true;
+  }
+  auto [start, end] = std::visit(Iterator{var}, var.data);
+  if (start == nullptr) {
+    assert(end == nullptr);
+    M->state->error = std::make_shared<MALError>("Argument isn't sequenceable");
+    return false;
+  }
+  var = MALType{(int)(end - start)};
+  return true;
+}
+
 void MALState::State::initGlobals() {
   globals.data["+"] = MALType{std::make_shared<MALCFunc>(add, "+")};
   globals.data["-"] = MALType{std::make_shared<MALCFunc>(sub, "-")};
@@ -156,6 +212,11 @@ void MALState::State::initGlobals() {
   globals.data["/"] = MALType{std::make_shared<MALCFunc>(div, "/")};
 
   globals.data["vec"] = MALType{std::make_shared<MALCFunc>(vec, "vec")};
+  globals.data["list"] = MALType{std::make_shared<MALCFunc>(list, "list")};
+  globals.data["list?"] = MALType{std::make_shared<MALCFunc>(is_list, "list?")};
   globals.data["hash-map"] =
       MALType{std::make_shared<MALCFunc>(hash_map, "hash-map")};
+  globals.data["empty?"] =
+      MALType{std::make_shared<MALCFunc>(is_empty, "empty?")};
+  globals.data["count"] = MALType{std::make_shared<MALCFunc>(count, "count")};
 }

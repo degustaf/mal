@@ -114,13 +114,33 @@ struct Iterator {
   template <typename T> std::array<const MALType *, 2> operator()(T &) {
     return {nullptr, nullptr};
   }
+  std::array<const MALType *, 2> operator()(std::shared_ptr<MALVector> &v) {
+    const auto &v2 = v;
+    return (*this)(v2);
+  }
   std::array<const MALType *, 2>
   operator()(const std::shared_ptr<MALVector> &v) {
+    if (v->empty()) {
+      // we check for nullptr to see if something isn't sequenceable. We want an
+      // empty vector to actually point to something.
+      return {&self, &self};
+    }
     return {&(*v->begin()), &(*v->end())};
   };
+  std::array<const MALType *, 2> operator()(std::shared_ptr<MALList> &l) {
+    const auto &l2 = l;
+    return (*this)(l2);
+  }
   std::array<const MALType *, 2> operator()(const std::shared_ptr<MALList> &l) {
+    if (l->empty()) {
+      // we check for nullptr to see if something isn't sequenceable. We want an
+      // empty vector to actually point to something.
+      return {&self, &self};
+    }
     return {&(*l->begin()), &(*l->end())};
   };
+
+  const MALType &self;
 };
 
 struct CallFrame {
